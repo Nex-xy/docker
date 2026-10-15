@@ -1,29 +1,28 @@
-FROM alpine:3.18
+# ---- Build Stage ----
+FROM alpine:3.18 AS build
 
-# Install build dependencies for telegram-bot-api
 RUN apk add --no-cache \
-    g++ \
-    make \
-    cmake \
-    git \
-    zlib-dev \
-    openssl-dev \
-    gperf \
-    readline-dev \
-    libressl-dev \
-    linux-headers
+    alpine-sdk cmake git zlib-dev openssl-dev gperf linux-headers
 
-# Clone and build telegram-bot-api from source
-RUN git clone --recursive https://github.com/tdlib/telegram-bot-api.git /app/telegram-bot-api
+WORKDIR /app
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+    https://github.com/tdlib/telegram-bot-api.git
+
 WORKDIR /app/telegram-bot-api
 RUN mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release .. && \
-    cmake --build . -- -j$(nproc) && \
-    cp telegram-bot-api /usr/local/bin/ && \
-    cd / && rm -rf /app/telegram-bot-api
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=.. .. && \
+    cmake --build . --target install -- -j$(nproc)
 
-# Expose the port Koyeb/Render expects
+# ---- Runtime Stage ----
+FROM alpine:3.18
+
+RUN apk add --no-cache libstdc++ libgcc openssl
+
+COPY --from=build /app/telegram-bot-api/bin/telegram-bot-api /usr/local/bin/
+
+RUN addgroup -S botapi && adduser -S -G botapi botapi
+USER botapi
+
 EXPOSE 8081
 
-# Run the API server with local storage mode enabled (2GB limit)
-CMD ["telegram-bot-api", "--http-port=8081", "--local"]
+CMD ["sh", "-c", "telegram-bot-api --http-port=${PORT:-8081} --local --api-id=${TELEGRAM_API_ID} --api-hash=${TELEGRAM_API_HASH}"]
